@@ -77,12 +77,35 @@ def load_data():
 df = load_data()                           # 주 × 플랫폼 × 유입 경로별 세션 퍼널
 
 # ------------------------------------------------------------
+# 1-1. 사이드바 필터 — 기간 · 플랫폼 · 유입 경로
+# ------------------------------------------------------------
+st.sidebar.header("필터")
+
+weeks = sorted(df["주시작일"].unique())
+start_week, end_week = st.sidebar.select_slider(
+    "기간", options=weeks, value=(weeks[0], weeks[-1]))
+
+platforms = sorted(df["플랫폼"].unique())
+sel_platforms = st.sidebar.multiselect("플랫폼", platforms, default=platforms)
+
+sources = sorted(df["유입경로"].unique())
+sel_sources = st.sidebar.multiselect("유입 경로", sources, default=sources)
+
+f = df[df["주시작일"].between(start_week, end_week)
+       & df["플랫폼"].isin(sel_platforms)
+       & df["유입경로"].isin(sel_sources)]
+
+if f.empty:
+    st.warning("선택한 조건에 해당하는 데이터가 없습니다. 필터를 바꿔 주세요.")
+    st.stop()
+
+# ------------------------------------------------------------
 # 2. KPI 카드
 # ------------------------------------------------------------
 def rate(a, b):
     return a / b * 100 if b else 0
 
-t = df[["세션수", "결제시작세션", "주문세션"]].sum()
+t = f[["세션수", "결제시작세션", "주문세션"]].sum()
 c1, c2, c3 = st.columns(3)
 c1.metric("세션 수", f"{t['세션수']:,}개")
 c2.metric("주문 전환율 (방문 → 주문)", f"{rate(t['주문세션'], t['세션수']):.1f}%")
@@ -96,7 +119,7 @@ st.divider()
 left, right = st.columns(2)
 
 # 3-1. 주별 결제 전환율 (플랫폼별)
-wp = df.groupby(["주시작일", "플랫폼"])[["결제시작세션", "주문세션"]].sum().reset_index()
+wp = f.groupby(["주시작일", "플랫폼"])[["결제시작세션", "주문세션"]].sum().reset_index()
 wp["결제전환율"] = (wp["주문세션"] / wp["결제시작세션"] * 100).round(1)
 fig1 = px.line(wp, x="주시작일", y="결제전환율", color="플랫폼", markers=True,
                title="주별 결제 전환율 (플랫폼별)")
@@ -106,12 +129,12 @@ left.plotly_chart(fig1, width="stretch")
 # 3-2. 세션 퍼널
 steps = {"1.방문": "세션수", "2.식당조회": "조회세션", "3.장바구니": "장바구니세션",
          "4.결제시작": "결제시작세션", "5.주문완료": "주문세션"}
-fun = pd.DataFrame({"단계": list(steps), "세션수": [df[c].sum() for c in steps.values()]})
+fun = pd.DataFrame({"단계": list(steps), "세션수": [f[c].sum() for c in steps.values()]})
 fig2 = px.funnel(fun, x="세션수", y="단계", title="세션 퍼널")
 right.plotly_chart(fig2, width="stretch")
 
 # 3-3. 유입 경로별 주문 전환율
-ws = df.groupby("유입경로")[["세션수", "주문세션"]].sum().reset_index()
+ws = f.groupby("유입경로")[["세션수", "주문세션"]].sum().reset_index()
 ws["주문전환율"] = (ws["주문세션"] / ws["세션수"] * 100).round(1)
 ws = ws.sort_values("주문전환율")
 fig3 = px.bar(ws, x="주문전환율", y="유입경로", orientation="h", text_auto=".1f",
