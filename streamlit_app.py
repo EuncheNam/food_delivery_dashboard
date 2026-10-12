@@ -142,3 +142,57 @@ fig3 = px.bar(ws, x="주문전환율", y="유입경로", orientation="h", text_a
 fig3.update_xaxes(range=[0, ws["주문전환율"].max() * 1.2])
 fig3.update_layout(xaxis_title="주문 전환율 (%)", yaxis_title="")
 st.plotly_chart(fig3, width="stretch")
+
+# ------------------------------------------------------------
+# 4. 집단 비교 — 플랫폼 또는 유입 경로별 퍼널 비교
+# ------------------------------------------------------------
+st.divider()
+st.subheader("집단 비교")
+
+by = st.radio("비교 기준", ["플랫폼", "유입경로"], horizontal=True)
+
+stage_cols = ["세션수", "조회세션", "장바구니세션", "결제시작세션", "주문세션"]
+stage_names = ["1.방문", "2.식당조회", "3.장바구니", "4.결제시작", "5.주문완료"]
+
+# 집단별 퍼널 5단계 합계
+grp = f.groupby(by)[stage_cols].sum().reset_index()
+groups = grp[by].tolist()
+
+# 긴 형태로 바꿔 단계별 전환율 계산
+cmp = grp.melt(id_vars=by, value_vars=stage_cols, var_name="컬럼", value_name="세션")
+cmp["단계"] = cmp["컬럼"].map(dict(zip(stage_cols, stage_names)))
+cmp = cmp.sort_values([by, "단계"]).reset_index(drop=True)
+
+first = cmp.groupby(by)["세션"].transform("first")          # 집단별 첫 단계(방문) 세션 수
+prev = cmp.groupby(by)["세션"].shift(1)                      # 직전 단계 세션 수
+cmp["누적전환율"] = (cmp["세션"] / first.where(first > 0) * 100).round(1)
+cmp["기준세션"] = prev
+cmp["단계전환율"] = (cmp["세션"] / prev.where(prev > 0) * 100).round(1)
+
+step = cmp[cmp["단계"] != "1.방문"].copy()                    # 단계 전환율은 2단계부터
+step["기준세션"] = step["기준세션"].astype("int64")
+
+orders = {by: groups, "단계": stage_names}
+cl, cr = st.columns(2)
+
+# 4-1. 누적 전환율 퍼널 (첫 단계 대비 %)
+fig4 = px.funnel(cmp, x="누적전환율", y="단계", color=by, category_orders=orders,
+                 hover_data={"세션": ":,"}, title=f"{by}별 누적 전환율 (방문 대비 %)")
+fig4.update_traces(texttemplate="%{x:.1f}%")
+# 1.방문이 맨 위, 5.주문완료가 맨 아래에 오도록 단계 순서를 고정
+fig4.update_yaxes(categoryorder="array", categoryarray=stage_names, autorange="reversed")
+cl.plotly_chart(fig4, width="stretch")
+
+# 4-2. 단계 전환율 막대 (직전 단계 대비 %)
+fig5 = px.bar(step, x="단계", y="단계전환율", color=by, barmode="group",
+              category_orders=orders, text_auto=".1f",
+              hover_data={"기준세션": ":,", "세션": ":,"},
+              title=f"{by}별 단계 전환율 (직전 단계 대비 %)")
+fig5.update_layout(xaxis_title="", yaxis_title="단계 전환율 (%)")
+cr.plotly_chart(fig5, width="stretch")
+
+# 세션 수가 적은 집단 안내
+small = grp.loc[grp["세션수"] < 500, by].tolist()
+if small:
+    st.caption(f"세션 수가 500개 미만인 집단({', '.join(map(str, small))})은 "
+               "값이 크게 흔들릴 수 있습니다. 해석에 주의해 주세요.")
