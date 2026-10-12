@@ -196,3 +196,53 @@ small = grp.loc[grp["세션수"] < 500, by].tolist()
 if small:
     st.caption(f"세션 수가 500개 미만인 집단({', '.join(map(str, small))})은 "
                "값이 크게 흔들릴 수 있습니다. 해석에 주의해 주세요.")
+
+# ------------------------------------------------------------
+# 5. 드릴다운 — 언제부터, 무엇 때문일까
+# ------------------------------------------------------------
+st.divider()
+st.subheader("드릴다운: 언제부터, 무엇 때문일까")
+
+other = "유입경로" if by == "플랫폼" else "플랫폼"      # 비교 기준이 아닌 다른 축
+step_map = {                                            # 단계 이름 → (직전 단계 컬럼, 이번 단계 컬럼)
+    "방문 → 식당조회":    ("세션수", "조회세션"),
+    "식당조회 → 장바구니": ("조회세션", "장바구니세션"),
+    "장바구니 → 결제시작": ("장바구니세션", "결제시작세션"),
+    "결제시작 → 주문":    ("결제시작세션", "주문세션"),
+}
+
+d1, d2 = st.columns(2)
+target = d1.selectbox("자세히 볼 집단", groups)          # 위 비교 기준에서 f에 있는 값만
+step_label = d2.selectbox("단계", list(step_map))
+den_col, num_col = step_map[step_label]
+
+all_weeks = sorted(f["주시작일"].unique())              # 필터 기간 안의 주 목록
+
+# 5-1. 고른 집단의 주별 단계 전환율 — 다른 축별로 쪼개 보기
+sub = f[f[by] == target]
+dd = sub.groupby(["주시작일", other])[[den_col, num_col]].sum()
+full_idx = pd.MultiIndex.from_product([all_weeks, sorted(sub[other].unique())],
+                                      names=["주시작일", other])
+dd = dd.reindex(full_idx).reset_index()                 # 데이터가 없는 주도 빈 값으로 자리 확보
+dd["전환율"] = (dd[num_col] / dd[den_col].where(dd[den_col] > 0) * 100).round(1)  # 분모 0이면 빈 값
+dd = dd.rename(columns={den_col: "기준세션", num_col: "도달세션"})
+
+fig6 = px.line(dd, x="주시작일", y="전환율", color=other, markers=True,
+               hover_data={"기준세션": ":,", "도달세션": ":,"},
+               title=f"① {target}의 주별 {step_label} 전환율 — {other}별로 쪼개 보기")
+fig6.update_layout(xaxis_title="", yaxis_title=f"{step_label} 전환율 (%)")
+st.plotly_chart(fig6, width="stretch")
+st.caption("모든 갈래가 같은 시점에 함께 움직였다면, 그 축은 원인이 아닙니다.")
+
+# 5-2. 같은 기간 주별 결제실패 건수 — 고른 집단 vs 그 외
+pf = f.assign(구분=f[by].where(f[by] == target, "그 외"))
+pf = pf.groupby(["주시작일", "구분"])["결제실패"].sum().reset_index()
+
+fig7 = px.bar(pf, x="주시작일", y="결제실패", color="구분", barmode="group",
+              category_orders={"구분": [target, "그 외"]},
+              color_discrete_map={target: "#B71C1C", "그 외": "#9E9E9E"},
+              hover_data={"결제실패": ":,"},
+              title=f"② 주별 결제실패 건수 — {target} vs 그 외")
+fig7.update_layout(xaxis_title="", yaxis_title="결제실패 (건)")
+st.plotly_chart(fig7, width="stretch")
+st.caption("문제가 생긴 시점과 함께 움직였다면 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다.")
